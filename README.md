@@ -2,6 +2,8 @@
 
 本專案演示了 Web 應用程式中常見的 XSS (Cross-Site Scripting) 攻擊原理，以及如何使用 Python 後端進行防禦。
 
+https://xjpisgay.pythonanywhere.com/
+
 ## 專案功能
 
 - **v1.0**: 實作反射型 XSS 攻擊 (Reflected XSS)。
@@ -26,5 +28,6 @@
    ```bash
    python app.py
    ```
+
 
 3. 開啟瀏覽器訪問 `http://127.0.0.1:5000`
