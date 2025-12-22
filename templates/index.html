@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XSS 攻擊原理與防禦實測 (Python Backend)</title>
+    <style>
+        /* 保留妳原本所有的 CSS */
+        :root { --bg: #f0f2f5; --card: #fff; --primary: #007bff; --danger: #dc3545; --success: #28a745; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { background: var(--card); padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 800px; position: relative; }
+        h1 { text-align: center; color: #333; margin-bottom: 10px; }
+        p { text-align: center; color: #666; margin-bottom: 20px; }
+        .nav-btn { position: absolute; top: 20px; left: -140px; text-decoration: none; background: #333; color: white; padding: 8px 15px; border-radius: 4px; font-size: 14px; }
+        .mode-switch { margin-bottom: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 8px; text-align: center; transition: all 0.3s; }
+        .mode-switch.secure { background: #d4edda; border-color: #c3e6cb; }
+        .switch-btn { margin-top: 10px; padding: 8px 16px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; }
+        .btn-submit { background: var(--primary); color: white; border: none; padding: 0 25px; border-radius: 6px; cursor: pointer; font-size: 16px; }
+        .payload-area { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+        .test-btn { padding: 6px 10px; font-size: 12px; border: 1px solid #ccc; background: white; border-radius: 4px; cursor: pointer; text-align: left; }
+        .test-btn:hover { background: #e2e6ea; }
+        .category-alert { border-left: 3px solid #e83e8c; }
+        .category-deface { border-left: 3px solid #fd7e14; }
+        .category-steal { border-left: 3px solid #dc3545; }
+        .category-style { border-left: 3px solid #6610f2; }
+        .comments-section { border-top: 2px solid #eee; margin-top: 20px; padding-top: 10px; min-height: 100px; }
+        .comment { background: #fff; padding: 15px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #e0e0e0; border-left: 5px solid var(--primary); word-break: break-all; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .comment-meta { font-size: 12px; color: #999; margin-bottom: 5px; }
+        /* 為了 Demo 效果 */
+        .hacked-bg { background-color: black !important; color: lime !important; }
+        .fake-login { border: 2px dashed red; padding: 10px; background: #fff0f0; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>XSS 漏洞實測實驗室 (Python Backend)</h1>
+        <p>測試後端 Python 是否正確過濾了使用者的惡意輸入</p>
+
+        <div id="securityPanel" class="mode-switch {% if mode == 'secure' %}secure{% endif %}">
+            {% if mode == 'secure' %}
+                當前狀態：<strong style="color: #28a745; font-size: 1.2em;">🔒 安全 (Escaped)</strong><br>
+                <small>啟用 Python <code>html.escape()</code>，將特殊符號轉換為 HTML 實體。</small><br>
+                <button onclick="toggleSecurity()" class="switch-btn" style="background:#28a745; color: white;">切換為危險模式</button>
+            {% else %}
+                當前狀態：<strong style="color: #dc3545; font-size: 1.2em;">🔓 危險 (Raw HTML)</strong><br>
+                <small>Python 直接回傳原始字串，前端使用 <code>| safe</code> 渲染。</small><br>
+                <button onclick="toggleSecurity()" class="switch-btn" style="background:#dc3545; color: white;">切換為安全模式</button>
+            {% endif %}
+        </div>
+
+        <form action="/" method="POST" class="input-group">
+            <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
+            
+            <input type="text" name="content" id="userInput" placeholder="在此輸入留言或是點擊下方測試腳本..." autocomplete="off" required>
+            <button type="submit" class="btn-submit">送出</button>
+        </form>
+
+        <div class="payload-area">
+            <span class="payload-title" style="display:block; margin-bottom:10px; font-weight:bold; color:#555;">▼ 點擊載入攻擊 Payload (共 15 種)</span>
+            <div class="grid" id="buttonGrid"></div>
+            <div style="margin-top:10px; text-align: right;">
+                <form action="/clear" method="POST" style="display:inline;">
+                    <button type="submit" style="font-size:12px; cursor:pointer; padding:5px 10px; background:#eee; border:1px solid #ccc; border-radius:4px;">🗑️ 清空後端資料庫</button>
+                </form>
+            </div>
+        </div>
+
+        <h3>留言列表 (來自 Python Server)：</h3>
+        <div class="comments-section" id="commentsList">
+            {% for comment in comments %}
+            <div class="comment">
+                <div class="comment-meta">
+                    {% if comment.mode == 'secure' %}
+                        [安全模式] 匿名同學 於 {{ comment.time }} 留言：
+                    {% else %}
+                        [危險模式] 駭客 於 {{ comment.time }} 植入：
+                    {% endif %}
+                </div>
+                <div>{{ comment.content | safe }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script>
+        // 15 組 XSS 測試 Payload (與原本相同，僅移除 JS postComment 邏輯)
+        const payloads = [
+            { cat: 'alert', label: '1. 基礎彈窗 (Img)', val: '<img src=x onerror=alert("XSS攻擊成功!")>' },
+            { cat: 'alert', label: '2. 數學運算彈窗', val: '<img src=x onerror=alert(100+200)>' },
+            { cat: 'alert', label: '3. 滑鼠滑過觸發', val: '<b onmouseover=alert("滑鼠陷阱!") style="font-size:20px;color:red;border:1px solid red;cursor:pointer">🔥 移到我上面試試</b>' },
+            { cat: 'alert', label: '4. 輸入框聚焦觸發', val: '<input onfocus=alert("聚焦觸發!") autofocus placeholder="自動聚焦陷阱">' },
+            { cat: 'alert', label: '5. Confirm 對話框', val: '<img src=x onerror=confirm("要下載病毒嗎?")>' },
+            { cat: 'deface', label: '6. 惡意圖片植入', val: '看這張圖 <br><img src="https://media.giphy.com/media/YQitE4YNQNahy/giphy.gif" style="border:5px solid red; width:100%">' },
+            { cat: 'deface', label: '7. 更改背景 (黑)', val: '<style>body { background-color: #222 !important; filter: invert(1); }</style> 網站被我關燈了！' },
+            { cat: 'deface', label: '8. 巨型文字破壞', val: '<h1 style="font-size:80px; color:red; position:fixed; top:0; left:0; background:black; width:100%; z-index:9999;">網站被駭了</h1>' },
+            { cat: 'deface', label: '9. 跑馬燈 (Marquee)', val: '<marquee style="font-size:40px; color:blue; background:yellow">⚠️ 你的電腦中毒了 ⚠️ 請立即匯款</marquee>' },
+            { cat: 'deface', label: '10. 隱藏其他內容', val: '<style>.input-group, .payload-area { display: none !important; }</style>哈哈，你的輸入框不見了！' },
+            { cat: 'steal', label: '11. 偽造登入框', val: '<div class="fake-login">系統逾時，請重新登入：<br><input type="password" placeholder="輸入密碼"><button onclick=alert("密碼已傳送給駭客!")>登入</button></div>' },
+            { cat: 'steal', label: '12. 偽造下載按鈕', val: '<a href="javascript:alert(\'下載惡意軟體...\')" style="background:red; color:white; padding:10px; display:block; text-align:center; text-decoration:none;">🎁 點擊領取獎金</a>' },
+            { cat: 'steal', label: '13. 讀取 Cookie', val: '<img src=x onerror=alert("你的Cookie:\\n"+document.cookie)>' },
+            { cat: 'style', label: '14. CSS 注入破壞', val: '<style>div { transform: rotate(2deg); }</style> 大家一起歪頭！' },
+            { cat: 'style', label: '15. Iframe 嵌入', val: '偷看別的網站：<iframe src="https://cat-bounce.com/" width="100%" height="400"></iframe>' }
+        ];
+
+        // 初始化按鈕
+        const grid = document.getElementById('buttonGrid');
+        payloads.forEach(p => {
+            const btn = document.createElement('button');
+            btn.className = `test-btn category-${p.cat}`;
+            btn.innerText = p.label;
+            btn.type = 'button'; // 防止誤觸提交表單
+            btn.onclick = () => {
+                document.getElementById('userInput').value = p.val;
+            };
+            grid.appendChild(btn);
+        });
+
+        // 切換安全模式邏輯
+        function toggleSecurity() {
+            const input = document.getElementById('modeInput');
+            // 切換 hidden input 的值，並重新整理頁面以更新 UI 顏色
+            // 這裡我們用一個簡單的 trick：改變 input 後直接 submit 表單（雖然沒內容），
+            // 或者更簡單：透過 URL 參數重新載入，但為了保持體驗，我們用 JS 修改 hidden input
+            
+            if (input.value === 'danger') {
+                input.value = 'secure';
+            } else {
+                input.value = 'danger';
+            }
+            // 為了讓 UI 顏色馬上變換，我們需要刷新頁面帶上新的 mode
+            // 但為了簡化，我們直接切換 CSS class 並讓使用者下次送出時生效
+            const panel = document.getElementById('securityPanel');
+            const btn = panel.querySelector('button');
+            
+            if (input.value === 'secure') {
+                panel.className = "mode-switch secure";
+                panel.innerHTML = `當前狀態：<strong style="color: #28a745; font-size: 1.2em;">🔒 安全 (Escaped)</strong><br><small>啟用 Python <code>html.escape()</code>，將特殊符號轉換為 HTML 實體。</small><br><button onclick="toggleSecurity()" class="switch-btn" style="background:#28a745; color: white;">切換為危險模式</button>`;
+            } else {
+                panel.className = "mode-switch";
+                panel.innerHTML = `當前狀態：<strong style="color: #dc3545; font-size: 1.2em;">🔓 危險 (Raw HTML)</strong><br><small>Python 直接回傳原始字串，前端使用 <code>| safe</code> 渲染。</small><br><button onclick="toggleSecurity()" class="switch-btn" style="background:#dc3545; color: white;">切換為安全模式</button>`;
+            }
+        }
+    </script>
+</body>
+</html>
