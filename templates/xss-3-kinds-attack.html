@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>XSS 互動教學實驗室</title>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --accent: #e74c3c;
+            --success: #27ae60;
+            --bg: #f4f7f6;
+        }
+        body { font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; background: var(--bg); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        
+        /* 介面佈局 */
+        .main-container { display: grid; grid-template-columns: 350px 1fr; gap: 20px; width: 100%; max-width: 1200px; }
+        
+        .panel { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); padding: 20px; }
+        
+        /* 左側：控制區 */
+        .control-panel h2 { margin-top: 0; color: var(--primary); font-size: 1.2em; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .mode-selector { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+        button.mode-btn { padding: 10px; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; background: white; transition: 0.3s; text-align: left; }
+        button.mode-btn.active { background: var(--accent); color: white; border-color: var(--accent); font-weight: bold; }
+        
+        .input-area textarea { width: 100%; height: 80px; padding: 10px; border-radius: 6px; border: 1px solid #ccc; box-sizing: border-box; font-family: monospace; resize: none; margin-bottom: 10px; }
+        .submit-btn { width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1em; font-weight: bold; }
+        .submit-btn:hover { opacity: 0.9; }
+
+        /* 右側：展示區 */
+        .display-panel { display: flex; flex-direction: column; gap: 20px; }
+        svg { background: #fff; border-radius: 10px; border: 1px solid #eee; width: 100%; height: 300px; }
+        
+        /* 受害者瀏覽器模擬 */
+        .browser-mockup { border: 2px solid #ddd; border-top: 30px solid #ddd; border-radius: 8px; background: white; min-height: 150px; position: relative; }
+        .browser-mockup::before { content: "受害者的瀏覽器視窗 (Victim's View)"; position: absolute; top: -25px; left: 10px; font-size: 12px; color: #666; font-weight: bold; }
+        .browser-content { padding: 15px; }
+
+        /* 動畫元素 */
+        .flow-path { fill: none; stroke: #eee; stroke-width: 3; stroke-dasharray: 5; }
+        .active-path { fill: none; stroke: var(--accent); stroke-width: 4; stroke-dasharray: 1000; stroke-dashoffset: 1000; }
+        .particle { fill: var(--accent); display: none; filter: drop-shadow(0 0 3px red); }
+        
+        .exploit-flash { animation: flash 0.5s infinite; }
+        @keyframes flash { 0% { background: white; } 50% { background: #ffcccc; } 100% { background: white; } }
+        
+        .hint-box { font-size: 0.85em; color: #666; background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+    <h1 style="color: var(--primary);">XSS 互動教學演示</h1>
+
+    <div class="main-container">
+        <div class="panel control-panel">
+            <h2>1. 選擇攻擊模式</h2>
+            <div class="mode-selector">
+                <button class="mode-btn active" onclick="setMode('reflected', this)">反射型 (Reflected)</button>
+                <button class="mode-btn" onclick="setMode('stored', this)">儲存型 (Stored)</button>
+                <button class="mode-btn" onclick="setMode('dom', this)">DOM 型 (DOM-based)</button>
+            </div>
+
+            <h2>2. 輸入攻擊載荷 (Payload)</h2>
+            <div class="input-area">
+                <textarea id="payloadInput" placeholder="例如: <img src=x onerror=alert('Hacked!')>"></textarea>
+                <button class="submit-btn" onclick="executeAttack()">發動攻擊！</button>
+            </div>
+
+            <div class="hint-box" id="mode-hint">
+                <strong>反射型提示：</strong> 惡意代碼會經過伺服器後，立即反射給使用者執行。
+            </div>
+            
+            <div style="margin-top:20px;">
+                <strong>Checkmarx 診斷：</strong>
+                <p id="cx-result" style="font-size: 0.9em; color: var(--accent);">等待掃描路徑...</p>
+            </div>
+        </div>
+
+        <div class="display-panel">
+            <div class="panel">
+                <svg id="visualMap" viewBox="0 0 800 300">
+                    <path id="path-reflected" class="flow-path" d="M 100 200 Q 250 50 400 50 Q 550 50 700 200" />
+                    <path id="path-stored" class="flow-path" d="M 100 200 Q 250 50 400 50 L 400 250 L 400 50 Q 550 50 700 200" />
+                    <path id="path-dom" class="flow-path" d="M 100 220 L 700 220" />
+
+                    <path id="anim-path" class="active-path" d="" />
+
+                    <g transform="translate(60, 190)"> <circle cx="40" cy="30" r="30" fill="#fadbd8" stroke="#e74c3c" />
+                        <text x="40" y="80" text-anchor="middle" font-size="12">駭客 (Source)</text>
+                        <text x="40" y="38" text-anchor="middle" font-size="20">😈</text>
+                    </g>
+
+                    <g transform="translate(360, 20)"> <rect width="80" height="60" rx="5" fill="#d6eaf8" stroke="#3498db" />
+                        <text x="40" y="100" text-anchor="middle" font-size="12">伺服器 (Server)</text>
+                    </g>
+
+                    <g transform="translate(360, 240)"> <ellipse cx="40" cy="20" rx="40" ry="15" fill="#ebdef0" stroke="#9b59b6" />
+                        <rect x="0" y="20" width="80" height="30" fill="#ebdef0" stroke="#9b59b6" />
+                        <text x="40" y="70" text-anchor="middle" font-size="12">資料庫 (DB)</text>
+                    </g>
+
+                    <g transform="translate(660, 190)"> <circle cx="40" cy="30" r="30" fill="#d4efdf" stroke="#27ae60" />
+                        <text x="40" y="80" text-anchor="middle" font-size="12">受害者 (Sink)</text>
+                        <text x="40" y="38" text-anchor="middle" font-size="20">👤</text>
+                    </g>
+
+                    <circle id="particle" class="particle" r="8" cx="0" cy="0" />
+                </svg>
+            </div>
+
+            <div class="panel browser-mockup" id="browser-window">
+                <div class="browser-content" id="output">
+                    <p style="color: #999;">等待攻擊結果呈現...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'reflected';
+        const hints = {
+            reflected: "<strong>反射型提示：</strong> 試試輸入 <code>&lt;img src=x onerror=alert('XSS')&gt;</code>。這種攻擊通常隱藏在 URL 連結中。",
+            stored: "<strong>儲存型提示：</strong> 代碼會存入資料庫。在真實案例中，任何造訪留言板的使用者都會中招！",
+            dom: "<strong>DOM 型提示：</strong> 粒子直接從駭客端跳到瀏覽器。注意：它完全不經過伺服器！"
+        };
+
+        const cxInsights = {
+            reflected: "Checkmarx 偵測到從 Request 到 Response 的不安全數據流。風險：高。",
+            stored: "Checkmarx 發現數據持久化後未經過濾即輸出。風險：極高。",
+            dom: "Checkmarx 透過掃描客戶端 JS，發現 window.location 被賦值給 innerHTML。風險：高。"
+        };
+
+        function setMode(mode, btn) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('mode-hint').innerHTML = hints[mode];
+            document.getElementById('output').innerHTML = '<p style="color: #999;">等待攻擊結果呈現...</p>';
+            document.getElementById('browser-window').classList.remove('exploit-flash');
+            document.getElementById('cx-result').innerText = "等待掃描路徑...";
+            document.getElementById('anim-path').setAttribute('d', '');
+        }
+
+        function executeAttack() {
+            const input = document.getElementById('payloadInput').value;
+            const particle = document.getElementById('particle');
+            const animPath = document.getElementById('anim-path');
+            const pathData = document.getElementById('path-' + currentMode).getAttribute('d');
+
+            if (!input) { alert('請輸入 Payload！'); return; }
+
+            // 1. 準備動畫
+            animPath.setAttribute('d', pathData);
+            const totalLength = animPath.getTotalLength();
+            animPath.style.strokeDasharray = totalLength;
+            animPath.style.strokeDashoffset = totalLength;
+            particle.style.display = 'block';
+
+            // 2. 執行 Checkmarx 掃描模擬
+            document.getElementById('cx-result').innerText = "掃描中... 🔍";
+            
+            // 3. 動畫過程
+            let start = null;
+            const duration = 2000;
+
+            function step(timestamp) {
+                if (!start) start = timestamp;
+                const progress = (timestamp - start) / duration;
+
+                if (progress < 1) {
+                    const point = animPath.getPointAtLength(progress * totalLength);
+                    particle.setAttribute('cx', point.x);
+                    particle.setAttribute('cy', point.y);
+                    animPath.style.strokeDashoffset = totalLength * (1 - progress);
+                    requestAnimationFrame(step);
+                } else {
+                    completeAttack(input);
+                }
+            }
+            requestAnimationFrame(step);
+        }
+
+        function completeAttack(payload) {
+            document.getElementById('cx-result').innerText = cxInsights[currentMode];
+            
+            const outputArea = document.getElementById('output');
+            const browserWindow = document.getElementById('browser-window');
+
+            // 模擬 XSS 漏洞：直接使用 innerHTML 渲染
+            outputArea.innerHTML = "<h4>搜尋結果 / 留言內容：</h4>" + payload;
+
+            // 檢查是否包含 script 標籤 (手動觸發 alert 模擬)
+            if (payload.includes('<script>') || payload.includes('onerror')) {
+                browserWindow.classList.add('exploit-flash');
+                setTimeout(() => {
+                    alert('【模擬警告】XSS 腳本已在受害者瀏覽器執行！\nPayload: ' + payload);
+                }, 100);
+            }
+        }
+    </script>
+</body>
+</html>
